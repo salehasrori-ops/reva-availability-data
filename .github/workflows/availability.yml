@@ -1,0 +1,46 @@
+name: Update availability data
+
+# Menyalin jadwal ketersediaan dari API publik situs (endpoint tanpa auth)
+# tiap ±10 menit, lalu menerbitkan availability.json ke branch `data`
+# (satu commit, force push). Tidak ada secret yang dibutuhkan.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: availability
+  cancel-in-progress: true
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Salin availability dari API publik situs
+        run: |
+          HTTP=$(curl -sS -o availability.json -w "%{http_code}" \
+            "https://revagroup-api.salehasrori.workers.dev/availability")
+          if [ "$HTTP" != "200" ]; then
+            echo "API returned HTTP $HTTP"
+            cat availability.json
+            exit 1
+          fi
+          # Validasi bentuk: harus JSON berisi .days — jangan menerbitkan galat.
+          jq -e '.days' availability.json > /dev/null
+          echo "Slots for $(jq '.days | length' availability.json) day(s)"
+
+      - name: Terbitkan ke branch data
+        run: |
+          mkdir out
+          cp availability.json out/
+          cd out
+          git init -q -b data
+          git config user.name "availability-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add availability.json
+          git commit -q -m "availability $(date -u +%FT%TZ)"
+          git push -q --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
